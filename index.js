@@ -1,7 +1,7 @@
 require('dotenv').config()
 
 const path = require('path');
-const { Deta } = require('deta');
+const { MongoClient } = require('mongodb');
 const express = require('express');
 const { marked } = require('marked');
 const schemas = require('./src/schemas');
@@ -10,8 +10,8 @@ const { pages, generateKey, generateDomainName } = require('./src/utils');
 
 
 const app = express();
-const deta = Deta(process.env.DETA_PROJECT_KEY);
-const db = deta.Base(process.env.DETA_BASE_NAME || 'pasting');
+const client = new MongoClient(process.env.MONGO_URI);
+const db = client.db(process.env.MONGO_DB_NAME || 'pasting');
 
 const port = process.argv[3] || process.env.PORT || 8000;
 const hostname = process.argv[2] || process.env.HOST || '127.0.0.1';
@@ -23,7 +23,7 @@ app.use(async (req, res, next) => {
     console.log(`${req.method} ${req.path}`);
     next();
 });
-
+collection = db.collection('pastes');
 
 app.use(express.json({ limit: '2mb' }));
 app.use('/static', express.static('./src/static'));
@@ -42,11 +42,14 @@ app.post("/api", JoiValidate(schemas.Paste), async (req, res) => {
         if (!req.body.key) {
             req.body.key = await generateKey()
         }
-        data = await db.insert(req.body)
-        res.json({
-            'key': data.key,
-            'url': `http://${domain}/${data.key}`
-        })
+
+        data = await collection.insertOne(req.body)
+        response = {
+            'key': req.body.key,
+            'url': `http://${domain}/${req.body.key}`
+        }
+        console.log(response);
+        res.json(response)
     } catch (error) {
         res.status(400).json({
             'error': error.message
@@ -56,7 +59,7 @@ app.post("/api", JoiValidate(schemas.Paste), async (req, res) => {
 
 
 app.get("/raw/:key", async (req, res) => {
-    data = await db.get(req.params.key);
+    data = await collection.findOne({ key: req.params.key });
     if (data && data.raw) {
         res.setHeader('Content-Type', 'text/plain');
         res.end(data.content);
@@ -68,7 +71,7 @@ app.get("/raw/:key", async (req, res) => {
 
 
 app.get("/:key", async (req, res) => {
-    data = await db.get(req.params.key);
+    data = await collection.findOne({ key: req.params.key });
     if (data) {
         if (!data.code) {
             data.content = marked.parse(data.content)
